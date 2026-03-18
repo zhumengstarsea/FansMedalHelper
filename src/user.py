@@ -210,7 +210,8 @@ class BiliUser:
             self.errmsg.append("登录失败 可能是 access_key 过期 , 请重新获取")
             await self.session.close()
         else:
-            await self.doSign()
+            if self.config.get('doSign', 0) != -1:
+                await self.doSign()
             await self.getMedals()
 
     async def start(self):

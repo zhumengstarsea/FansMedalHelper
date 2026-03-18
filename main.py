@@ -37,6 +37,7 @@ try:
     cron_index = users.get("CRON_INDEX", 0)
     assert isinstance(cron_index, int), "CRON_INDEX参数错误"
     config = {
+        "doSign": users.get("doSign", 0),
         "LIKE_CD": users["LIKE_CD"],
         # "SHARE_CD": users['SHARE_CD'],
         "DANMAKU_CD": users["DANMAKU_CD"],
