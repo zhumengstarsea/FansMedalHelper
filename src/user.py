@@ -128,12 +128,22 @@ class BiliUser:
                     self.medals.append(medal) if medal['room_info']['room_id'] != 0 else ...
                     self.log.success(f"{medal['anchor_info']['nick_name']} 在白名单中，加入任务")
         min_intimacy = self.config.get("MIN_INTIMACY_THRESHOLD", 30)
-        [
-            self.medalsNeedDo.append(medal)
-            for medal in self.medals
-            if medal['medal']['level'] < 120 and medal['medal']['today_feed'] < min_intimacy
-        ]
-        self.log.info(f"当前亲密度阈值设置为 {min_intimacy}，未达到此阈值的牌子将执行任务")
+        if min_intimacy == 0:
+            # 0 视为不限制，所有可执行牌子都加入任务
+            self.medalsNeedDo.extend(
+                [medal for medal in self.medals if medal['medal']['level'] < 120]
+            )
+            self.log.info("当前亲密度阈值设置为无限制，所有牌子将执行任务")
+        else:
+            self.medalsNeedDo.extend(
+                [
+                    medal
+                    for medal in self.medals
+                    if medal['medal']['level'] < 120
+                    and medal['medal']['today_feed'] < min_intimacy
+                ]
+            )
+            self.log.info(f"当前亲密度阈值设置为 {min_intimacy}，未达到此阈值的牌子将执行任务")
 
     async def like_v3(self, failedMedals: list = []):
         if self.config['LIKE_CD'] == -1:
