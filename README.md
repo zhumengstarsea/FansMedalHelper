@@ -8,7 +8,7 @@
 
 ## 关于
 
-本仓库纯自用，如有本项目相关问题请不要去打扰上游作者，请提交 [Issue](https://github.com/zhumengstarsea/FansMedalHelper/issues) ！
+**本仓库纯自用，如有本项目相关问题请不要去打扰上游作者，请提交 [Issue](https://github.com/zhumengstarsea/FansMedalHelper/issues) ！**
 
 <details>
 <summary>关于上游</summary>
