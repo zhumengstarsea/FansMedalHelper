@@ -60,4 +60,4 @@
 
 ## Contact
 
-本项目相关问题请不要去打扰原作者，如有问题，请提交 Issue 或[与我联系](https://github.com/xiaofeiTM233)！
+本项目相关问题请不要去打扰原作者，如有问题，请提交 Issue ！
