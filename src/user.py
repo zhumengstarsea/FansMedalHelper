@@ -229,8 +229,6 @@ class BiliUser:
                 self.errmsg.append(f"【{self.name}】 {medal['anchor_info']['nick_name']} 房间弹幕打卡失败：{str(e)}")
             finally:
                 await asyncio.sleep(self.config['DANMAKU_CD'] if self.config['DANMAKU_CD'] > 0 else 0)
-        if hasattr(self, 'initialMedal'):
-            (await self.api.wearMedal(self.initialMedal['medal_id'])) if self.config['WEARMEDAL'] else ...
         self.log.log("SUCCESS", "弹幕打卡任务完成")
         self.message.append(f"【{self.name}】 弹幕打卡任务完成 {successnum}/{len(self.medals)}")
 
@@ -262,51 +260,96 @@ class BiliUser:
                 await asyncio.sleep(self.config['DANMAKU_CD'] if self.config['DANMAKU_CD'] > 0 else 0)
             if i < danmaku_count - 1:
                 self.log.log("INFO", "第{}/{}轮弹幕打卡完成".format(i + 1, danmaku_count))
-        if hasattr(self, 'initialMedal'):
-            (await self.api.wearMedal(self.initialMedal['medal_id'])) if self.config['WEARMEDAL'] else ...
         self.log.log("SUCCESS", "弹幕打卡任务完成")
         self.message.append(f"【{self.name}】 弹幕打卡任务完成 {successnum}/{len(self.medals)}")
 
-    async def init(self):
+    async def restore_initial_medal(self):
+        """
+        所有任务结束后恢复任务开始前佩戴的粉丝牌。
+
+        只有开启自动佩戴时才需要恢复；恢复动作统一放在 start 的 finally
+        中，确保观看、点赞、弹幕和签到任务全部结束或异常退出后都会执行。
+        """
+        if not self.config['WEARMEDAL'] or not hasattr(self, 'initialMedal'):
+            return
+
+        try:
+            user_info = await self.api.getUserInfo()
+            current_medal = user_info.get('medal') or {}
+            initial_medal_id = self.initialMedal.get('medal_id')
+            current_medal_id = current_medal.get('medal_id')
+            current_target_id = current_medal.get('target_id')
+            initial_target_id = self.initialMedal.get('target_id')
+
+            if (
+                current_medal_id == initial_medal_id
+                or current_target_id == initial_target_id
+            ):
+                self.log.log("INFO", "任务结束后已是任务开始前佩戴的粉丝牌，无需恢复")
+                return
+
+            await self.api.wearMedal(initial_medal_id)
+            self.log.log("SUCCESS", f"任务结束后已恢复佩戴粉丝牌：{self.initialMedal.get('medal_name', initial_medal_id)}")
+            self.message.append(
+                f"【{self.name}】任务结束后已恢复佩戴粉丝牌：{self.initialMedal.get('medal_name', initial_medal_id)}"
+            )
+        except Exception as e:
+            self.log.exception("任务结束后恢复粉丝牌失败")
+            self.errmsg.append(f"【{self.name}】任务结束后恢复粉丝牌失败：{e}")
+
+    async def init(self, test_mode: bool = False):
         if not await self.loginVerify():
             self.log.log("ERROR", "登录失败 可能是 access_key 过期 , 请重新获取")
             self.errmsg.append("登录失败 可能是 access_key 过期 , 请重新获取")
             await self.session.close()
         else:
+            if test_mode:
+                self.log.log("SUCCESS", "登录测试成功，已跳过所有日常任务")
+                self.message.append(f"【{self.name}】登录测试成功，已跳过所有日常任务")
+                return
             if self.config.get('DOSIGN', 0) == 1:
                 await self.doSign()
             await self.getMedals()
 
     async def start(self):
         if self.isLogin:
-            tasks = []
-            should_execute = self.should_execute_task()
-            min_intimacy = self.config['MIN_INTIMACY_THRESHOLD']
+            try:
+                tasks = []
+                should_execute = self.should_execute_task()
+                min_intimacy = self.config['MIN_INTIMACY_THRESHOLD']
 
-            if self.medalsNeedDo:
-                if min_intimacy == 0:
-                    self.log.log("INFO", f"共有 {len(self.medalsNeedDo)} 个牌子")
+                if self.medalsNeedDo:
+                    if min_intimacy == 0:
+                        self.log.log("INFO", f"共有 {len(self.medalsNeedDo)} 个牌子")
+                    else:
+                        self.log.log("INFO", f"共有 {len(self.medalsNeedDo)} 个牌子未满 {min_intimacy} 亲密度")
+                    if should_execute:
+                        tasks.append(self.like_v3())
+                    else:
+                        self.log.log("INFO", f"点赞任务跳过（当前 cron 索引: {self.cron_index}/{self.total_cron_count}, 仅在{self.get_target_description()} cron 执行）")
+                    tasks.append(self.watchinglive())
                 else:
-                    self.log.log("INFO", f"共有 {len(self.medalsNeedDo)} 个牌子未满 {min_intimacy} 亲密度")
+                    if min_intimacy == 0:
+                        self.log.log("INFO", "当前无可执行牌子")
+                    else:
+                        self.log.log("INFO", f"所有牌子已满 {min_intimacy} 亲密度")
+
                 if should_execute:
-                    tasks.append(self.like_v3())
+                    tasks.append(self.sendDanmaku())
+                    tasks.append(self.signInGroups())
+                    tasks.append(self.doCustomSignIn())
                 else:
-                    self.log.log("INFO", f"点赞任务跳过（当前 cron 索引: {self.cron_index}/{self.total_cron_count}, 仅在{self.get_target_description()} cron 执行）")
-                tasks.append(self.watchinglive())
-            else:
-                if min_intimacy == 0:
-                    self.log.log("INFO", "当前无可执行牌子")
-                else:
-                    self.log.log("INFO", f"所有牌子已满 {min_intimacy} 亲密度")
+                    self.log.log("INFO", f"弹幕签到、应援团签到、活动签到任务跳过（当前 cron 索引: {self.cron_index}/{self.total_cron_count}, 仅在{self.get_target_description()} cron 执行）")
 
-            if should_execute:
-                tasks.append(self.sendDanmaku())
-                tasks.append(self.signInGroups())
-                tasks.append(self.doCustomSignIn())
-            else:
-                self.log.log("INFO", f"弹幕签到、应援团签到、活动签到任务跳过（当前 cron 索引: {self.cron_index}/{self.total_cron_count}, 仅在{self.get_target_description()} cron 执行）")
-
-            await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                task_errors = [result for result in results if isinstance(result, Exception)]
+                if task_errors:
+                    for task_error in task_errors:
+                        self.log.error(f"任务执行异常：{task_error}")
+                        self.errmsg.append(f"【{self.name}】任务执行异常：{task_error}")
+                    raise task_errors[0]
+            finally:
+                await self.restore_initial_medal()
 
     def _merge_error_messages(self):
         """

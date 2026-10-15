@@ -80,6 +80,7 @@ except Exception as e:
 @log.catch
 async def main():
     messageList = []
+    test_mode = "--test" in sys.argv
     session = aiohttp.ClientSession(trust_env=True)
     try:
         resp = await (
@@ -113,12 +114,14 @@ async def main():
                 user.get("banned_uid", ""),
                 config,
             )
-            initTasks.append(biliUser.init())
-            startTasks.append(biliUser.start())
+            initTasks.append(biliUser.init(test_mode=test_mode))
+            if not test_mode:
+                startTasks.append(biliUser.start())
             catchMsg.append(biliUser.sendmsg())
     try:
         await asyncio.gather(*initTasks)
-        await asyncio.gather(*startTasks)
+        if not test_mode:
+            await asyncio.gather(*startTasks)
     except Exception as e:
         log.exception(e)
         # messageList = messageList + list(itertools.chain.from_iterable(await asyncio.gather(*catchMsg)))
@@ -182,7 +185,11 @@ async def push_message(session, sendkey, message):
 if __name__ == "__main__":
     cron = users.get("CRON", None)
 
-    if cron:
+    if "--test" in sys.argv:
+        log.info("测试模式：只执行登录和推送测试，跳过定时器与所有日常任务")
+        run()
+        log.info("测试任务结束")
+    elif cron:
         from apscheduler.schedulers.blocking import BlockingScheduler
         from apscheduler.triggers.cron import CronTrigger
 
