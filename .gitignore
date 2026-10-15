@@ -13,3 +13,6 @@ venv/
 *.swp
 *.lnk
 *.bat
+*.json
+/logs
+*.log
