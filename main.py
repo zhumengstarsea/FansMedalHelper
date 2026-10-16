@@ -27,6 +27,7 @@ try:
             users = yaml.load(f, Loader=yaml.FullLoader)
     # 兼容旧版 users.yaml；新版本新增的配置项缺省时沿用文档建议值。
     users.setdefault("DOSIGN", 0)
+    users.setdefault("DANMAKU_ONLY", 0)
     users.setdefault("WATCHINGLIVE", 30)
     users.setdefault("MIN_INTIMACY_THRESHOLD", 30)
     users.setdefault("WATCHINGLIVE_CD", 60)
@@ -38,6 +39,7 @@ try:
     users.setdefault("CUSTOMSIGNIN_CD", 2)
     users.setdefault("CRON_INDEX", 0)
     assert users["DOSIGN"] in [0, 1], "DOSIGN参数错误"
+    assert users["DANMAKU_ONLY"] in [0, 1], "DANMAKU_ONLY参数错误"
     assert users["WATCHINGLIVE"] >= 0, "WATCHINGLIVE参数错误"
     assert users["MIN_INTIMACY_THRESHOLD"] >= 0, "MIN_INTIMACY_THRESHOLD参数错误"
     assert users["WATCHINGLIVE_CD"] >= -1, "WATCHINGLIVE_CD参数错误"
@@ -54,6 +56,7 @@ try:
     assert isinstance(cron_index, int), "CRON_INDEX参数错误"
     config = {
         "DOSIGN": users["DOSIGN"],
+        "DANMAKU_ONLY": users["DANMAKU_ONLY"],
         "WATCHINGLIVE": users["WATCHINGLIVE"],
         "MIN_INTIMACY_THRESHOLD": users["MIN_INTIMACY_THRESHOLD"],
         "WATCHINGLIVE_CD": users["WATCHINGLIVE_CD"],
@@ -214,7 +217,7 @@ if __name__ == "__main__":
             try:
                 schedulers.add_job(run, CronTrigger.from_crontab(cron_expr),
                                    misfire_grace_time=3600,
-                                   max_instances=2,
+                                   max_instances=1 if config['DANMAKU_ONLY'] else 2,
                                    kwargs={'cron_index': index + 1, 'total_count': len(cron_list)})
                 log.info(f"已添加定时任务：[{cron_expr}] (第 {index + 1}/{len(cron_list)} 个)")
                 job_count += 1

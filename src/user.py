@@ -134,6 +134,12 @@ class BiliUser:
                 if medal['medal']['target_id'] in self.whiteList:
                     self.medals.append(medal) if medal['room_info']['room_id'] != 0 else ...
                     self.log.success(f"{medal['anchor_info']['nick_name']} 在白名单中，加入任务")
+        if self.config.get('DANMAKU_ONLY'):
+            self.medalsNeedDo.extend(
+                medal for medal in self.medals if medal['medal'].get('is_lighted') == 0
+            )
+            self.log.info(f"检查 {len(self.medals)} 个粉丝牌，未点亮 {len(self.medalsNeedDo)} 个")
+            return
         min_intimacy = self.config['MIN_INTIMACY_THRESHOLD']
         if min_intimacy == 0:
             # 0 视为不限制，所有可执行牌子都加入任务
@@ -307,13 +313,16 @@ class BiliUser:
                 self.log.log("SUCCESS", "登录测试成功，已跳过所有日常任务")
                 self.message.append(f"【{self.name}】登录测试成功，已跳过所有日常任务")
                 return
-            if self.config.get('DOSIGN', 0) == 1:
+            if self.config.get('DOSIGN', 0) == 1 and not self.config.get('DANMAKU_ONLY'):
                 await self.doSign()
             await self.getMedals()
 
     async def start(self):
         if self.isLogin:
             try:
+                if self.config.get('DANMAKU_ONLY'):
+                    await self.maintainMedalLights()
+                    return
                 tasks = []
                 should_execute = self.should_execute_task()
                 min_intimacy = self.config['MIN_INTIMACY_THRESHOLD']
@@ -350,6 +359,67 @@ class BiliUser:
                     raise task_errors[0]
             finally:
                 await self.restore_initial_medal()
+
+    async def maintainMedalLights(self):
+        """亮着也发送每日弹幕；开播则延后，次日任务开始前结束等待。"""
+        if self.config['DANMAKU_CD'] == -1 or not self.config['DANMAKU_COUNT']:
+            self.log.warning("弹幕已关闭，仅检查粉丝牌点亮状态")
+            return
+        pending = {medal['medal']['target_id']: medal for medal in self.medals}
+        counts = {uid: 0 for uid in pending}
+        count = self.config['DANMAKU_COUNT']
+        deadline = self.config.get('STOPWATCHINGTIME')
+        if not deadline:
+            deadline = (datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                        + timedelta(days=1)).timestamp()
+        deadline -= 60
+        sent = 0
+        statuses = {}
+        checked_at = 0
+        deferred = set()
+        self.log.info(f"仅弹幕维护：每个牌子 {count} 条，开播时延后，停播后继续")
+        while pending and time.time() < deadline:
+            sent_this_pass = False
+            for uid, medal in list(pending.items()):
+                if time.time() >= deadline:
+                    break
+                # 状态最多缓存一分钟；缺失或查询失败时不发送。
+                if time.monotonic() - checked_at >= 60 or not statuses:
+                    try:
+                        statuses = {row['medal']['target_id']: row['room_info'].get('living_status')
+                                    async for row in self.api.getFansMedalandRoomID()}
+                        checked_at = time.monotonic()
+                    except Exception as error:
+                        self.log.warning(f"查询开播状态失败，弹幕延后：{type(error).__name__}")
+                        statuses = {}
+                        break
+                if statuses.get(uid) != 0:
+                    if uid not in deferred:
+                        self.log.info(f"{medal['anchor_info']['nick_name']} 开播中或状态未知，弹幕延后")
+                        deferred.add(uid)
+                    continue
+                try:
+                    if self.config['WEARMEDAL']:
+                        await self.api.wearMedal(medal['medal']['medal_id'])
+                    await self.api.sendDanmaku(medal['room_info']['room_id'])
+                    sent += 1
+                    counts[uid] += 1
+                    sent_this_pass = True
+                    self.log.debug(f"{medal['anchor_info']['nick_name']} 停播期间弹幕已发送 ({counts[uid]}/{count})")
+                    if counts[uid] >= count:
+                        pending.pop(uid)
+                except Exception as error:
+                    self.errmsg.append(f"【{self.name}】 {medal['anchor_info']['nick_name']} 维护弹幕失败：{type(error).__name__}")
+                    pending.pop(uid)
+                await asyncio.sleep(max(self.config['DANMAKU_CD'], 0))
+            if pending and not sent_this_pass:
+                await asyncio.sleep(max(0, min(120, deadline - time.time())))
+                statuses = {}
+        if pending:
+            remaining = '、'.join(f"{medal['anchor_info']['nick_name']} {counts[uid]}/{count}"
+                                 for uid, medal in pending.items())
+            self.message.append(f"【{self.name}】 次日任务前仍开播或状态不可用，未补齐：{remaining}")
+        self.message.append(f"【{self.name}】 每日维护弹幕已发送 {sent}/{len(self.medals) * count} 条")
 
     def _merge_error_messages(self):
         """
@@ -410,6 +480,17 @@ class BiliUser:
             await self.session.close()
             return self.message + self.errmsg
         await self.getMedals()
+        if self.config.get('DANMAKU_ONLY'):
+            dark = [medal['anchor_info']['nick_name'] for medal in self.medalsNeedDo]
+            lit = sum(medal['medal'].get('is_lighted') == 1 for medal in self.medals)
+            self.message.append(f"【{self.name}】 粉丝牌点亮检查：共 {len(self.medals)} 个，已点亮 {lit} 个，未点亮 {len(dark)} 个")
+            if dark:
+                self.message.append('未点亮：' + '、'.join(dark))
+            user_info = await self.api.getUserInfo()
+            current = user_info.get('medal') or {}
+            self.message.append(f"【当前佩戴】{current.get('medal_name', '未佩戴')}")
+            await self.session.close()
+            return self.message + self._merge_error_messages() + ['---']
         intimacy_groups = {}
         for medal in self.medals:
             if medal['medal']['level'] >= 120:
